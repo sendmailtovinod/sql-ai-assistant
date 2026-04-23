@@ -13,6 +13,7 @@ import {
   QueryResult,
 } from '@/lib/types'
 import { buildChatFirstMessage } from '@/lib/prompts'
+import { saveQuery } from '@/lib/history'
 import ResultsTable from './ResultsTable'
 
 const MAX_TURNS = 10
@@ -130,12 +131,14 @@ function TurnCard({ turn, index, connection, onRun, runningId }: TurnCardProps) 
 interface Props {
   schema: Table[]
   connection: DbConnection | null
+  onSaved?: () => void
+  initialQuestion?: string
 }
 
-export default function ConversationalSQL({ schema, connection }: Props) {
+export default function ConversationalSQL({ schema, connection, onSaved, initialQuestion }: Props) {
   const [turns, setTurns] = useState<ConversationTurn[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialQuestion ?? '')
   const [streaming, setStreaming] = useState(false)
   const [streamBuffer, setStreamBuffer] = useState('')
   const [runningId, setRunningId] = useState<string | null>(null)
@@ -210,6 +213,18 @@ export default function ConversationalSQL({ schema, connection }: Props) {
     setMessages([...nextMessages, assistantMessage])
     setStreamBuffer('')
     setStreaming(false)
+
+    if (sql) {
+      saveQuery({
+        id: makeId(),
+        mode: 'chat-sql',
+        input: text,
+        output: sql,
+        schema,
+        createdAt: Date.now(),
+      })
+      onSaved?.()
+    }
   }
 
   async function handleRun(turn: ConversationTurn) {

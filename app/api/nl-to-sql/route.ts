@@ -1,10 +1,8 @@
 export const maxDuration = 30
 
-import Anthropic from '@anthropic-ai/sdk'
 import { buildNLtoSQLPrompt, SYSTEM_PROMPT } from '@/lib/prompts'
 import { Table } from '@/lib/types'
-
-const client = new Anthropic()
+import { anthropic } from '@/lib/langsmith'
 
 export async function POST(req: Request) {
   try {
@@ -14,31 +12,19 @@ export async function POST(req: Request) {
       return new Response('Question is required', { status: 400 })
     }
 
-    const stream = client.messages.stream({
+    const startTime = Date.now()
+
+    const stream = anthropic.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 1024,
-      system: [
-        {
-          type: 'text',
-          text: SYSTEM_PROMPT,
-          cache_control: { type: 'ephemeral' },
-        },
-      ],
-      messages: [
-        {
-          role: 'user',
-          content: buildNLtoSQLPrompt(schema ?? [], question),
-        },
-      ],
+      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: buildNLtoSQLPrompt(schema ?? [], question) }],
     })
 
     const readable = new ReadableStream({
       async start(controller) {
         for await (const chunk of stream) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta'
-          ) {
+          if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
             controller.enqueue(new TextEncoder().encode(chunk.delta.text))
           }
         }
@@ -46,22 +32,19 @@ export async function POST(req: Request) {
 
         const final = await stream.finalMessage()
         const u = final.usage
-        console.log(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            event: 'claude_call',
-            route: 'nl-to-sql',
-            model: final.model,
-            input_tokens: u.input_tokens,
-            output_tokens: u.output_tokens,
-            cache_read_tokens: u.cache_read_input_tokens ?? 0,
-            cache_write_tokens: u.cache_creation_input_tokens ?? 0,
-          })
-        )
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: 'claude_call',
+          route: 'nl-to-sql',
+          model: final.model,
+          input_tokens: u.input_tokens,
+          output_tokens: u.output_tokens,
+          cache_read_tokens: u.cache_read_input_tokens ?? 0,
+          cache_write_tokens: u.cache_creation_input_tokens ?? 0,
+          latency_ms: Date.now() - startTime,
+        }))
       },
-      cancel() {
-        stream.abort()
-      },
+      cancel() { stream.abort() },
     })
 
     return new Response(readable, {

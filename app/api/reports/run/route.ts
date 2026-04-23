@@ -8,12 +8,15 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const MAX_ITERATIONS = 12
 const MAX_ROWS = 20
-
 const WRITE_PATTERN =
   /^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|REPLACE|MERGE)\b/i
 
 export async function POST(req: Request) {
-  const { url, schema }: { url: string; schema: Table[] } = await req.json()
+  const {
+    url,
+    schema,
+    question,
+  }: { url: string; schema: Table[]; question: string } = await req.json()
 
   if (!url?.trim()) {
     return new Response(JSON.stringify({ type: 'error', message: 'No connection URL' }), {
@@ -42,15 +45,20 @@ export async function POST(req: Request) {
 
       try {
         await pgClient.connect()
-        send({ type: 'status', text: 'Connected. Analysing schema…' })
+        send({ type: 'status', text: 'Connected. Running scheduled report…' })
+
+        const firstMessage = question
+          ? buildAgentFirstMessage(schema, question)
+          : buildAgentFirstMessage(schema)
 
         const messages: Anthropic.Messages.MessageParam[] = [
-          { role: 'user', content: buildAgentFirstMessage(schema) },
+          { role: 'user', content: firstMessage },
         ]
 
         let queryCount = 0
         const startTime = Date.now()
         let reportDelivered = false
+        let reportText = ''
         let totalInputTokens = 0
         let totalOutputTokens = 0
 
@@ -69,7 +77,6 @@ export async function POST(req: Request) {
           messages.push({ role: 'assistant', content: response.content })
 
           if (response.stop_reason === 'end_turn') {
-            // Agent wrote a text response instead of calling deliver_report — use it as report
             if (!reportDelivered) {
               const textContent = response.content
                 .filter((b) => b.type === 'text')
@@ -77,6 +84,7 @@ export async function POST(req: Request) {
                 .join('\n')
               if (textContent.trim()) {
                 reportDelivered = true
+                reportText = textContent
                 send({ type: 'report', text: textContent })
               }
             }
@@ -109,10 +117,8 @@ export async function POST(req: Request) {
                 await pgClient.query('BEGIN READ ONLY')
                 const result = await pgClient.query(sql)
                 await pgClient.query('ROLLBACK')
-
                 const rows = (result.rows ?? []).slice(0, MAX_ROWS)
                 queryCount++
-
                 send({ type: 'tool_result', rows, rowCount: result.rowCount ?? rows.length })
                 toolResults.push({
                   type: 'tool_result',
@@ -132,6 +138,7 @@ export async function POST(req: Request) {
             } else if (block.name === 'deliver_report') {
               const { report } = block.input as { report: string }
               reportDelivered = true
+              reportText = report
               send({ type: 'report', text: report })
               toolResults.push({
                 type: 'tool_result',
@@ -146,7 +153,6 @@ export async function POST(req: Request) {
         }
 
         if (!reportDelivered) {
-          // Last-chance fallback: extract text from last assistant message
           const lastMsg = messages.at(-1)
           if (lastMsg?.role === 'assistant' && Array.isArray(lastMsg.content)) {
             const text = (lastMsg.content as Anthropic.Messages.ContentBlock[])
@@ -154,6 +160,7 @@ export async function POST(req: Request) {
               .map((b) => (b as { type: 'text'; text: string }).text)
               .join('\n')
             if (text.trim()) {
+              reportText = text
               send({ type: 'report', text })
             } else {
               send({ type: 'error', message: 'Agent did not deliver a report within the iteration limit.' })
@@ -166,10 +173,15 @@ export async function POST(req: Request) {
         const duration = Date.now() - startTime
         send({ type: 'done', queryCount, duration })
 
+        // Include reportText in a trailing metadata line for the caller
+        controller.enqueue(
+          encoder.encode(JSON.stringify({ type: '__meta__', reportText, queryCount, duration }) + '\n')
+        )
+
         console.log(JSON.stringify({
           ts: new Date().toISOString(),
           event: 'claude_call',
-          route: 'agent',
+          route: 'reports/run',
           total_input_tokens: totalInputTokens,
           total_output_tokens: totalOutputTokens,
           query_count: queryCount,

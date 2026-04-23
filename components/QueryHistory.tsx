@@ -65,8 +65,11 @@ export default function QueryHistory({ open, onClose, refreshKey, onRestore }: P
                   onClick={() => { onRestore(r); onClose() }}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <Badge variant={r.mode === 'nl-to-sql' ? 'default' : 'secondary'} className="text-[10px] px-1.5 py-0">
-                      {r.mode === 'nl-to-sql' ? 'NL → SQL' : 'Explain'}
+                    <Badge
+                      variant={r.mode === 'nl-to-sql' ? 'default' : r.mode === 'chat-sql' ? 'outline' : 'secondary'}
+                      className="text-[10px] px-1.5 py-0"
+                    >
+                      {r.mode === 'nl-to-sql' ? 'NL → SQL' : r.mode === 'chat-sql' ? 'Chat SQL' : 'Explain'}
                     </Badge>
                     <span className="text-xs text-muted-foreground">{timeAgo(r.createdAt)}</span>
                   </div>

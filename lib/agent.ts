@@ -7,18 +7,19 @@ Your job is to autonomously analyse the database and produce a clear business he
 Steps:
 1. Examine the schema to understand the business domain (e-commerce, SaaS, logistics, etc.)
 2. Identify the key health metrics that matter — revenue, signups, orders, activity, churn, etc.
-3. Run targeted SQL queries to measure those metrics
+3. Run targeted SQL queries to measure those metrics (maximum 5 queries)
 4. Where possible compare current vs historical periods (today vs yesterday, this week vs last week)
 5. Flag any anomalies, drops, or concerns you detect
-6. Call deliver_report with a concise markdown report summarising all findings
+6. ALWAYS call deliver_report — you MUST end every analysis by calling deliver_report
 
 Rules:
 - Only write SELECT or WITH queries — never INSERT, UPDATE, DELETE, DROP, etc.
 - Keep queries simple and efficient — avoid full table scans on large data
-- Run 4–8 queries maximum; do not over-query
-- If a query fails, note it and move on — do not retry more than once
-- Be specific: include actual numbers and percentage changes in the report
-- Call deliver_report exactly once when you have enough data`
+- Run at most 5 queries — after 5 queries you MUST call deliver_report immediately
+- If a query fails, note it in the report and move on
+- Be specific: include actual numbers in the report
+- You MUST call deliver_report as your final action — never end without calling it
+- Do NOT write a text response after running queries — use deliver_report instead`
 
 export const agentTools: Anthropic.Tool[] = [
   {
@@ -57,7 +58,7 @@ export const agentTools: Anthropic.Tool[] = [
   },
 ]
 
-export function buildAgentFirstMessage(schema: Table[]): string {
+export function buildAgentFirstMessage(schema: Table[], question?: string): string {
   const schemaBlock = schema
     .map(
       (t) =>
@@ -67,5 +68,8 @@ export function buildAgentFirstMessage(schema: Table[]): string {
     )
     .join('\n\n')
 
-  return `SCHEMA:\n${schemaBlock}\n\nCurrent date/time (UTC): ${new Date().toISOString()}\n\nAnalyse the business health of this database and deliver a report.`
+  const task = question?.trim() ||
+    'Analyse the business health of this database and deliver a report.'
+
+  return `SCHEMA:\n${schemaBlock}\n\nCurrent date/time (UTC): ${new Date().toISOString()}\n\n${task}`
 }
